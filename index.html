@@ -3029,6 +3029,23 @@ async function swGoPurge(){
     try{await ptsFetchWallet(wallet,true);ptsRenderMy();}catch{}
   }
 
+  // Force vault refresh to show newly transferred tokens (with delay for blockchain indexing)
+  setTimeout(async()=>{
+    vaultLoaded = false;
+    if(document.getElementById('page-vault').style.display==='block'){
+      try{await vaultLoad(true);}catch{}
+    }
+  },5000);
+
+  // Force wallet rescan to update token list (with delay for blockchain indexing)
+  setTimeout(async()=>{
+    if(wallet&&!isRO){
+      swToks=[];swSel.clear();
+      document.getElementById('sw-discovered').style.display='block';
+      await swRescan();
+    }
+  },3000);
+
   const succeededERC20=[...swappedKeys].filter(k=>k!=='__PLS__').length;
   const succeededPLS=swappedKeys.has('__PLS__')?1:0;
   const succeededTransfers=transferredKeys.size;
