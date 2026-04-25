@@ -1703,8 +1703,8 @@ const IS_LOCAL = (()=>{
   const host = location.hostname;
   return ['localhost','127.0.0.1','::1'].includes(host);
 })();
-// CORS proxy for localhost testing - allows GeckoTerminal/BlockScout to work
-const CORS_PROXY = IS_LOCAL ? 'https://corsproxy.io/?' : '';
+// CORS proxy for all environments - GeckoTerminal/BlockScout block CORS from any origin
+const CORS_PROXY = 'https://corsproxy.io/?';
 // APIs blocked by CORS on localhost/file — RPC is NOT in this list
 const NO_CORS_API = false; // Disabled to allow CORS proxy usage
 
