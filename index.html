@@ -1704,7 +1704,8 @@ const IS_LOCAL = (()=>{
   return ['localhost','127.0.0.1','::1'].includes(host);
 })();
 // CORS proxy for all environments - GeckoTerminal/BlockScout block CORS from any origin
-const CORS_PROXY = 'https://corsproxy.io/?';
+// Using allorigins.win as alternative proxy
+const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
 // APIs blocked by CORS on localhost/file — RPC is NOT in this list
 const NO_CORS_API = false; // Disabled to allow CORS proxy usage
 
@@ -1944,7 +1945,8 @@ async function gtFetchBatch(addresses) {
   const CHUNK = 30;
   for (let i = 0; i < toFetch.length; i += CHUNK) {
     const chunk = toFetch.slice(i, i + CHUNK);
-    const url = CORS_PROXY + `${GT_API}/networks/${GT_NETWORK}/tokens/multi/${chunk.join(',')}`;
+    const targetUrl = `${GT_API}/networks/${GT_NETWORK}/tokens/multi/${chunk.join(',')}`;
+    const url = CORS_PROXY + encodeURIComponent(targetUrl);
     try {
       const res = await fetch(url, {
         headers: { 'Accept': 'application/json;version=20230302' }
@@ -2393,9 +2395,9 @@ async function fetchBS2Tokens(addr){
   if(NO_CORS_API) return []; // BlockScout blocked by CORS on localhost/file://
   const results=[];
   let nextPage=null;
-  const base=CORS_PROXY + `${BS2}/addresses/${addr}/tokens?type=ERC-20%2CERC-721%2CERC-1155`;
+  const targetBase=`${BS2}/addresses/${addr}/tokens?type=ERC-20%2CERC-721%2CERC-1155`;
   try{
-    let url=base;
+    let url=CORS_PROXY + encodeURIComponent(targetBase);
     for(let page=0;page<20;page++){// max 20 pages = 2000 tokens
       const r=await fetch(url,{headers:{Accept:'application/json'}});
       if(!r.ok)break;
@@ -2418,7 +2420,8 @@ async function fetchBS2Tokens(addr){
       if(!np||!items.length)break;
       // Build next URL with page params
       const params=new URLSearchParams(np).toString();
-      url=`${base}&${params}`;
+      const nextTarget=`${targetBase}&${params}`;
+      url=CORS_PROXY + encodeURIComponent(nextTarget);
     }
   }catch(e){if(!IS_FILE) console.warn('BlockScout v2 tokens failed:',e.message);}
   return results;
@@ -3207,7 +3210,8 @@ async function ptsFetchWallet(addr, force=false){
 
     for(const contract of contracts){
       // Get txs where wallet is sender
-      let url=CORS_PROXY + `${BS2}/addresses/${k}/transactions?filter=to&limit=50`;
+      const targetUrl=`${BS2}/addresses/${k}/transactions?filter=to&limit=50`;
+      let url=CORS_PROXY + encodeURIComponent(targetUrl);
       for(let page=0;page<5;page++){
         let r,j;
         try{r=await fetch(url,{headers:{Accept:'application/json'}});j=await r.json();}catch{break;}
@@ -3240,13 +3244,15 @@ async function ptsFetchWallet(addr, force=false){
         }
         const np=j?.next_page_params;
         if(!np||!items.length)break;
-        url=CORS_PROXY + `${BS2}/addresses/${k}/transactions?filter=to&limit=50&${new URLSearchParams(np)}`;
+        const nextTarget=`${BS2}/addresses/${k}/transactions?filter=to&limit=50&${new URLSearchParams(np)}`;
+        url=CORS_PROXY + encodeURIComponent(nextTarget);
       }
 
       // Also get incoming PRGX transfers (buys via swaps — PRGX lands in wallet from router)
       if(contract===C.PRGX.toLowerCase()){
         try{
-          let turl=CORS_PROXY + `${BS2}/addresses/${k}/token-transfers?type=ERC-20&filter=to&token=${C.PRGX}&limit=50`;
+          const targetTurl=`${BS2}/addresses/${k}/token-transfers?type=ERC-20&filter=to&token=${C.PRGX}&limit=50`;
+          let turl=CORS_PROXY + encodeURIComponent(targetTurl);
           for(let page=0;page<3;page++){
             let r,j;
             try{r=await fetch(turl,{headers:{Accept:'application/json'}});j=await r.json();}catch{break;}
@@ -3258,7 +3264,8 @@ async function ptsFetchWallet(addr, force=false){
             }
             const np=j?.next_page_params;
             if(!np||!items.length)break;
-            turl=`${BS2}/addresses/${k}/token-transfers?type=ERC-20&filter=to&token=${C.PRGX}&limit=50&${new URLSearchParams(np)}`;
+            const nextTurl=`${BS2}/addresses/${k}/token-transfers?type=ERC-20&filter=to&token=${C.PRGX}&limit=50&${new URLSearchParams(np)}`;
+            turl=CORS_PROXY + encodeURIComponent(nextTurl);
           }
         }catch{}
       }
