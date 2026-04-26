@@ -795,7 +795,11 @@ body{overscroll-behavior-y:contain;}
 
 <div class="app" onclick="closeWalletMenu(event)">
 
-  <!-- NAV -->
+  <!-- TEST MODE BANNER -->
+  <div style="background:linear-gradient(135deg,rgba(245,166,35,.18),rgba(255,31,94,.12));border-bottom:1px solid rgba(245,166,35,.3);padding:.5rem 1rem;text-align:center;font-family:'Space Mono',monospace;font-size:.6rem;color:#fcd34d;letter-spacing:.03em;display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;">
+    <span>⚠️ <strong>TEST MODE</strong> — This app is currently in beta testing. Features may change. For support:</span>
+    <a href="mailto:pulsepurgex@gmail.com" style="color:var(--teal);font-weight:700;text-decoration:none;">pulsepurgex@gmail.com</a>
+  </div>
   <div class="nav">
     <div class="nav-inner">
       <div class="nav-logo">
@@ -1375,8 +1379,13 @@ body{overscroll-behavior-y:contain;}
 
     <!-- Hero -->
     <div class="pts-hero">
-      <div class="pts-hero-title">⭐ PurgeX Points</div>
-      <div class="pts-hero-sub">Earn points for every interaction with PurgeX contracts — purging, staking, buying, claiming. Compete on the global leaderboard. Points are tracked live from on-chain transactions.</div>
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;">
+        <div>
+          <div class="pts-hero-title">⭐ PurgeX Points</div>
+          <div class="pts-hero-sub">Earn points for every interaction with PurgeX contracts — purging, staking, buying, claiming. Compete on the global leaderboard. Points are tracked live from on-chain transactions.</div>
+        </div>
+        <button onclick="ptsLoad(true)" style="background:rgba(245,166,35,.12);border:1px solid rgba(245,166,35,.25);color:var(--amber);border-radius:8px;padding:.4rem .75rem;font-family:'Space Mono',monospace;font-size:.62rem;font-weight:700;cursor:pointer;white-space:nowrap;flex-shrink:0;margin-top:.25rem;">↺ Refresh</button>
+      </div>
     </div>
 
     <!-- My Points (connected wallet) -->
@@ -1524,8 +1533,13 @@ body{overscroll-behavior-y:contain;}
 
     <!-- Hero -->
     <div class="vault-hero">
-      <div class="vault-title">🏛️ Treasury Vault</div>
-      <div class="vault-sub">Live view of the treasury contract — showing purged tokens received from wallet cleanups, separate from the locked 250M PRGX allocation. All values are live on-chain.</div>
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;">
+        <div>
+          <div class="vault-title">🏛️ Treasury Vault</div>
+          <div class="vault-sub">Live view of the treasury contract — showing purged tokens received from wallet cleanups, separate from the locked 250M PRGX allocation. Balances verified on-chain via RPC.</div>
+        </div>
+        <button onclick="vaultLoad(true)" style="background:rgba(139,33,245,.15);border:1px solid rgba(139,33,245,.3);color:#c084fc;border-radius:8px;padding:.4rem .75rem;font-family:'Space Mono',monospace;font-size:.62rem;font-weight:700;cursor:pointer;white-space:nowrap;flex-shrink:0;">↺ Refresh</button>
+      </div>
     </div>
 
     <!-- Summary stats -->
@@ -1703,8 +1717,10 @@ const IS_LOCAL = (()=>{
   const host = location.hostname;
   return ['localhost','127.0.0.1','::1'].includes(host);
 })();
+// CORS proxy for localhost testing - GeckoTerminal/BlockScout block CORS on localhost
+const CORS_PROXY = IS_LOCAL ? 'https://api.allorigins.win/raw?url=' : '';
 // APIs blocked by CORS on localhost/file — RPC is NOT in this list
-const NO_CORS_API = IS_FILE || IS_LOCAL;
+const NO_CORS_API = IS_FILE;
 
 // ─── HTML ESCAPE (XSS prevention) ─────────────────────────────────
 // All token names/symbols from external APIs must be escaped before
@@ -1927,7 +1943,8 @@ async function gtFetchBatch(addresses) {
   const CHUNK = 30;
   for (let i = 0; i < toFetch.length; i += CHUNK) {
     const chunk = toFetch.slice(i, i + CHUNK);
-    const url = `${GT_API}/networks/${GT_NETWORK}/tokens/multi/${chunk.join(',')}`;
+    const targetUrl = `${GT_API}/networks/${GT_NETWORK}/tokens/multi/${chunk.join(',')}`;
+    const url = CORS_PROXY ? CORS_PROXY + encodeURIComponent(targetUrl) : targetUrl;
     try {
       const res = await fetch(url, {
         headers: { 'Accept': 'application/json;version=20230302' }
@@ -2047,7 +2064,9 @@ async function homeRefresh(){
       el.textContent=price<0.01?'$'+price.toFixed(8):price<1?'$'+price.toFixed(6):'$'+price.toFixed(4);
     }
     // fetch pool data for volume/mcap
-    const r=await fetch(`${GT_API}/networks/${GT_NETWORK}/tokens/${C.PRGX.toLowerCase()}`);
+    const targetUrl = `${GT_API}/networks/${GT_NETWORK}/tokens/${C.PRGX.toLowerCase()}`;
+    const poolUrl = CORS_PROXY ? CORS_PROXY + encodeURIComponent(targetUrl) : targetUrl;
+    const r=await fetch(poolUrl);
     if(r.ok){
       const j=await r.json();
       const attr=j?.data?.attributes;
@@ -2360,9 +2379,9 @@ async function fetchBS2Tokens(addr){
   if(NO_CORS_API) return []; // BlockScout blocked by CORS on localhost/file://
   const results=[];
   let nextPage=null;
-  const base=`${BS2}/addresses/${addr}/tokens?type=ERC-20%2CERC-721%2CERC-1155`;
+  const targetBase=`${BS2}/addresses/${addr}/tokens?type=ERC-20%2CERC-721%2CERC-1155`;
   try{
-    let url=base;
+    let url=CORS_PROXY ? CORS_PROXY + encodeURIComponent(targetBase) : targetBase;
     for(let page=0;page<20;page++){// max 20 pages = 2000 tokens
       const r=await fetch(url,{headers:{Accept:'application/json'}});
       if(!r.ok)break;
@@ -2385,7 +2404,8 @@ async function fetchBS2Tokens(addr){
       if(!np||!items.length)break;
       // Build next URL with page params
       const params=new URLSearchParams(np).toString();
-      url=`${base}&${params}`;
+      const nextTarget=`${targetBase}&${params}`;
+      url=CORS_PROXY ? CORS_PROXY + encodeURIComponent(nextTarget) : nextTarget;
     }
   }catch(e){if(!IS_FILE) console.warn('BlockScout v2 tokens failed:',e.message);}
   return results;
@@ -3065,7 +3085,14 @@ async function swGoPurge(){
   // Refresh staking dashboard to reflect new stake
   setTimeout(stRefresh, 3000);
   // Bust points cache so new purge/transfer interactions show immediately
-  if(wallet)ptsCache.delete(wallet.toLowerCase());
+  if(wallet){ ptsCache.delete(wallet.toLowerCase()); ptsLoaded=false; }
+  // If any tokens were sent to multisig treasury, reset vault so it re-fetches
+  // Use a delay to let the chain index the transaction before re-scanning
+  if(succeededTransfers > 0){
+    vaultLoaded = false; // force full reload next vault visit
+    vaultLastLoad = 0;
+    setTimeout(()=>{ vaultLoaded=false; vaultLastLoad=0; }, 10000);
+  }
 }
 function swSetPS(i,st,msg=''){swProgs[i].st=st;if(msg)swProgs[i].err=msg;swRenderProg();}
 function swRenderProg(){
@@ -3125,108 +3152,123 @@ const LB_PAGE_SIZE=20;
 let ptsLoaded=false;
 
 async function ptsLoad(force=false){
-  if(ptsLoaded&&!force) {
-    // Just refresh connected wallet display
-    if(wallet&&!isRO) ptsFetchWallet(wallet).then(()=>ptsRenderMy());
-    return;
-  }
-  ptsLoaded=true;
-
-  // My wallet
+  // Always refresh connected wallet — never serve stale points to the user
   if(wallet&&!isRO){
     const msgEl=document.getElementById('pts-my-msg');
-    if(msgEl){msgEl.style.display='none';}
+    if(msgEl) msgEl.style.display='none';
     document.getElementById('pts-my-total').textContent='…';
+    document.getElementById('pts-fill').style.width='0%';
+    // Bust cache so we always get fresh data on page visit
+    ptsCache.delete(wallet.toLowerCase());
     await ptsFetchWallet(wallet);
     ptsRenderMy();
   } else {
     const msgEl=document.getElementById('pts-my-msg');
     if(msgEl){msgEl.textContent='Connect your wallet to see your points and rank.';msgEl.style.display='block';}
+    document.getElementById('pts-my-total').textContent='—';
   }
 
-  // Leaderboard
-  await ptsLoadLeaderboard(false);
+  // Only load leaderboard once per session unless forced
+  if(!ptsLoaded||force){
+    ptsLoaded=true;
+    await ptsLoadLeaderboard(false);
+  }
 }
 
-// Fetch all txs to/from PurgeX contracts for a given address via BlockScout
+// Fetch all points-earning transactions for a wallet address.
+// Strategy:
+//   PURGE   = wallet sent a tx that resulted in PRGX received from router
+//             (scan outgoing txs to PRGX token contract + router)
+//   STAKE   = wallet called stake() on staking contract
+//   UNSTAKE = wallet called withdraw() on staking contract
+//   CLAIM   = wallet called claimReward() on staking contract
+//   TREASURY= wallet transferred tokens to treasury address
+//   BUY     = wallet received PRGX from router via Buy page
+//             (same as purge signal, differentiated by also checking outgoing tx)
 async function ptsFetchWallet(addr){
   const k=addr.toLowerCase();
   const cached=ptsCache.get(k);
   if(cached&&Date.now()-cached.ts<PTS_TTL) return cached;
 
-  const breakdown={purge:0,stake:0,buy:0,treasury:0,claim:0,unstake:0};
-  const counts={purge:0,stake:0,buy:0,treasury:0,claim:0,unstake:0};
+  if(NO_CORS_API){
+    const result={total:0,breakdown:{purge:0,stake:0,buy:0,treasury:0,claim:0,unstake:0},
+                  counts:{purge:0,stake:0,buy:0,treasury:0,claim:0,unstake:0},ts:Date.now(),offline:true};
+    ptsCache.set(k,result);
+    return result;
+  }
+
+  const bd={purge:0,stake:0,buy:0,treasury:0,claim:0,unstake:0};
+  const ct={purge:0,stake:0,buy:0,treasury:0,claim:0,unstake:0};
+
+  // Paginate a BlockScout v2 endpoint, collect all items up to maxPages
+  async function fetchAll(baseUrl, maxPages=15){
+    const all=[];
+    let targetUrl=baseUrl;
+    let url=CORS_PROXY ? CORS_PROXY + encodeURIComponent(targetUrl) : targetUrl;
+    for(let p=0;p<maxPages;p++){
+      let j;
+      try{ const r=await fetch(url,{headers:{Accept:'application/json'}}); j=await r.json(); }catch{ break; }
+      const batch=j?.items||[];
+      all.push(...batch);
+      const np=j?.next_page_params;
+      if(!np||!batch.length) break;
+      const base=targetUrl.split('?')[0];
+      const nextTarget=`${base}?${new URLSearchParams({...np,limit:50})}`;
+      url=CORS_PROXY ? CORS_PROXY + encodeURIComponent(nextTarget) : nextTarget;
+    }
+    return all;
+  }
 
   try{
-    // Fetch internal + normal txs from all 3 contracts
-    const contracts=[
-      C.PURGER.toLowerCase(),
-      C.STAKING.toLowerCase(),
-      C.PRGX.toLowerCase(),
-    ];
+    // ── 1. All txs FROM this wallet (outgoing) ────────────────────
+    // BlockScout: filter=from means txs where wallet is the sender
+    const outTxs = await fetchAll(`${BS2}/addresses/${k}/transactions?filter=from&limit=50`);
 
-    for(const contract of contracts){
-      // Get txs where wallet is sender
-      let url=`${BS2}/addresses/${k}/transactions?filter=to&limit=50`;
-      for(let page=0;page<5;page++){
-        let r,j;
-        try{r=await fetch(url,{headers:{Accept:'application/json'}});j=await r.json();}catch{break;}
-        const items=j?.items||[];
-        for(const tx of items){
-          if(!tx.to?.hash) continue;
-          const to=tx.to.hash.toLowerCase();
-          const input=tx.raw_input||tx.input||'';
-          const sel=input.slice(0,10).toLowerCase();
-          // Purge = any tx to PURGER contract
-          if(to===C.PURGER.toLowerCase()){counts.purge++;breakdown.purge+=PTS.PURGE;}
-          // Staking interactions
-          if(to===C.STAKING.toLowerCase()){
-            // stake()
-            if(['0xa694fc3a','0x07836a45'].includes(sel)){counts.stake++;breakdown.stake+=PTS.STAKE;}
-            // withdraw/unstake
-            else if(['0x2e1a7d4d','0x28c55f69'].includes(sel)){counts.unstake++;breakdown.unstake+=PTS.UNSTAKE;}
-            // claim/getReward
-            else if(['0xb88a802f','0xcc80e532','0x0d096be2','0x6c161277'].includes(sel)){counts.claim++;breakdown.claim+=PTS.CLAIM;}
-          }
-          // PRGX token interactions — transfer to treasury
-          if(to===C.PRGX.toLowerCase()){
-            if(sel==='0xa9059cbb'){ // transfer(address,uint256)
-              // check if destination in calldata is treasury
-              const toAddr=('0x'+input.slice(34,74)).toLowerCase();
-              if(toAddr===C.TREASURY.toLowerCase()){counts.treasury++;breakdown.treasury+=PTS.TREASURY;}
-              else{ counts.buy++; breakdown.buy+=PTS.BUY; } // buying via token transfers counts too
-            }
-          }
-        }
-        const np=j?.next_page_params;
-        if(!np||!items.length)break;
-        url=`${BS2}/addresses/${k}/transactions?filter=to&limit=50&${new URLSearchParams(np)}`;
+    for(const tx of outTxs){
+      const to =(tx.to?.hash||'').toLowerCase();
+      const inp=(tx.raw_input||tx.input||'').toLowerCase();
+      const sel=inp.slice(0,10);
+
+      // Staking contract interactions
+      if(to===C.STAKING.toLowerCase()){
+        if(['0xa694fc3a','0x07836a45'].includes(sel)){      ct.stake++;  bd.stake+=PTS.STAKE;   }
+        else if(['0x2e1a7d4d','0x28c55f69'].includes(sel)){ct.unstake++;bd.unstake+=PTS.UNSTAKE;}
+        else if(['0xb88a802f','0xcc80e532','0x0d096be2','0x6c161277'].includes(sel)){ct.claim++;bd.claim+=PTS.CLAIM;}
       }
 
-      // Also get incoming PRGX transfers (buys via swaps — PRGX lands in wallet from router)
-      if(contract===C.PRGX.toLowerCase()){
-        try{
-          let turl=`${BS2}/addresses/${k}/token-transfers?type=ERC-20&filter=to&token=${C.PRGX}&limit=50`;
-          for(let page=0;page<3;page++){
-            let r,j;
-            try{r=await fetch(turl,{headers:{Accept:'application/json'}});j=await r.json();}catch{break;}
-            const items=j?.items||[];
-            for(const tx of items){
-              const from=(tx.from?.hash||'').toLowerCase();
-              // If PRGX came from the router, it's a buy
-              if(from===C.ROUTER.toLowerCase()){counts.buy++;breakdown.buy+=PTS.BUY;}
-            }
-            const np=j?.next_page_params;
-            if(!np||!items.length)break;
-            turl=`${BS2}/addresses/${k}/token-transfers?type=ERC-20&filter=to&token=${C.PRGX}&limit=50&${new URLSearchParams(np)}`;
-          }
-        }catch{}
+      // Treasury transfers
+      if(to===C.TREASURY.toLowerCase()){ ct.treasury++; bd.treasury+=PTS.TREASURY; }
+
+      // ERC-20 transfer to treasury via PRGX token contract
+      if(to===C.PRGX.toLowerCase()&&sel==='0xa9059cbb'){
+        const dest=('0x'+inp.slice(34,74)).toLowerCase();
+        if(dest===C.TREASURY.toLowerCase()){ ct.treasury++; bd.treasury+=PTS.TREASURY; }
+      }
+
+      // Direct buy: wallet→router ETH swap selectors
+      if(to===C.ROUTER.toLowerCase()&&
+         ['0x7ff36ab5','0xfb3bdb41','0xb6f9de95','0x4a25d94a','0x38ed1739','0x5c11d795'].includes(sel)){
+        ct.buy++; bd.buy+=PTS.BUY;
       }
     }
-  }catch(e){console.warn('ptsFetchWallet error:',e.message);}
 
-  const total=Object.values(breakdown).reduce((a,b)=>a+b,0);
-  const result={total,breakdown,counts,ts:Date.now()};
+    // ── 2. Incoming PRGX token transfers ─────────────────────────
+    // PRGX arriving from the router = a purge swap completed
+    // Also catches purges initiated via this app (approve+swap flow)
+    const prgxIn = await fetchAll(
+      `${BS2}/addresses/${k}/token-transfers?type=ERC-20&filter=to&token=${C.PRGX}&limit=50`
+    );
+    for(const tx of prgxIn){
+      const from=(tx.from?.hash||'').toLowerCase();
+      if(from===C.ROUTER.toLowerCase()){ ct.purge++; bd.purge+=PTS.PURGE; }
+    }
+
+  }catch(e){
+    if(!NO_CORS_API) console.warn('ptsFetchWallet error:',addr,e.message);
+  }
+
+  const total=Object.values(bd).reduce((a,b)=>a+b,0);
+  const result={total,breakdown:bd,counts:ct,ts:Date.now()};
   ptsCache.set(k,result);
   return result;
 }
@@ -3236,8 +3278,23 @@ function ptsRenderMy(){
   const data=ptsCache.get(k);
   if(!data) return;
 
+  // Show offline notice when APIs not reachable
+  if(data.offline){
+    const msgEl=document.getElementById('pts-my-msg');
+    if(msgEl){
+      msgEl.textContent='⚠️ Points require a deployed URL — BlockScout API is CORS-blocked on localhost.';
+      msgEl.style.display='block';
+    }
+    document.getElementById('pts-my-total').textContent='—';
+    return;
+  }
+
   const {total,breakdown,counts}=data;
   document.getElementById('pts-my-total').textContent=total.toLocaleString();
+
+  // Hide offline message
+  const msgEl=document.getElementById('pts-my-msg');
+  if(msgEl) msgEl.style.display='none';
 
   // Rank badge
   const rank=ptsRank(total);
@@ -3245,17 +3302,18 @@ function ptsRenderMy(){
   if(badge){badge.textContent=rank.icon+' '+rank.name;badge.className='rank-badge '+rank.cls;}
 
   // Progress bar
-  const next=ptsNextRank(total);
-  const prev=RANKS.slice().reverse().find(r=>r.min<=total)?.min||0;
+  const tiers=[0,500,2000,5000,10000];
+  const next=tiers.find(t=>t>total)??null;
+  const prev=([...tiers].reverse().find(t=>t<=total))??0;
   if(next!==null){
     const range=next-prev;
     const done=total-prev;
-    const pct=Math.min(100,Math.round((done/range)*100));
+    const pct=Math.min(100,range>0?Math.round((done/range)*100):0);
     document.getElementById('pts-fill').style.width=pct+'%';
     const nextRank=RANKS.find(r=>r.min===next);
     document.getElementById('pts-progress-title').textContent=`Progress to ${nextRank?.name||'next rank'}`;
     document.getElementById('pts-progress-next').textContent=`${(next-total).toLocaleString()} pts needed`;
-  } else {
+  }else{
     document.getElementById('pts-fill').style.width='100%';
     document.getElementById('pts-progress-title').textContent='Max rank achieved 👑';
     document.getElementById('pts-progress-next').textContent='Legend';
@@ -3273,14 +3331,14 @@ function ptsRenderMy(){
   for(const[key,cntId,valId] of rows){
     const cntEl=document.getElementById(cntId);
     const valEl=document.getElementById(valId);
-    if(cntEl)cntEl.textContent=counts[key]+' tx'+(counts[key]!==1?'s':'');
-    if(valEl)valEl.textContent=breakdown[key].toLocaleString();
+    if(cntEl)cntEl.textContent=(counts[key]||0)+' tx'+((counts[key]||0)!==1?'s':'');
+    if(valEl)valEl.textContent=(breakdown[key]||0).toLocaleString();
   }
 
   // Rank position from leaderboard
   if(lbData.length){
     const myIdx=lbData.findIndex(e=>e.addr===k);
-    const pos=myIdx>=0?myIdx+1:'—';
+    const pos=myIdx>=0?'#'+(myIdx+1):'—';
     document.getElementById('pts-my-pos').textContent=pos;
   }
 }
@@ -3429,114 +3487,159 @@ function ptsRenderLeaderboard(){
 }
 
 // ─── VAULT ────────────────────────────────────────────────────────
-// Scans the treasury/multisig contract for all ERC-20 token holdings.
-// Separates the locked 250M PRGX allocation from purged tokens.
-// Fetches USD prices via GeckoTerminal batch API.
-
 const TREASURY_ADDR = C.TREASURY.toLowerCase();
-const PRGX_LOCKED_ALLOC = 250_000_000; // the known 250M PRGX treasury allocation
 
 let vaultLoaded = false;
+let vaultLastLoad = 0;
+const VAULT_TTL = 30_000; // 30s minimum between reloads
 
 async function vaultLoad(force=false) {
-  if (vaultLoaded && !force) return;
+  const now = Date.now();
+  // Allow reload if: forced, never loaded, or TTL expired
+  if (!force && vaultLoaded && (now - vaultLastLoad) < VAULT_TTL) return;
   vaultLoaded = true;
+  vaultLastLoad = now;
 
   const listEl = document.getElementById('vlt-purged-list');
   if (listEl) listEl.innerHTML = '<div class="vault-loading"><div class="spin-r" style="margin:0 auto .5rem;"></div><div class="spin-t">Scanning treasury contract…</div></div>';
 
   try {
-    // 1. Fetch all tokens held by treasury via BlockScout v2
+    // 1. Fetch token list from BlockScout API
     const tokens = await fetchBS2Tokens(TREASURY_ADDR);
 
-    // 2. Also grab native PLS balance
+    // 2. Native PLS balance via RPC (authoritative, no cache)
     let plsWei = '0';
     try {
-      const r = await fetch(`${API}?module=account&action=balance&address=${TREASURY_ADDR}`);
-      const d = await r.json(); plsWei = d.result || '0';
+      const res = await fetch(RPC, {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({jsonrpc:'2.0',id:rpcId++,method:'eth_getBalance',params:[TREASURY_ADDR,'latest']})});
+      const j = await res.json();
+      plsWei = BigInt(j.result||'0').toString();
     } catch {}
     const plsNum = Number(BigInt(plsWei)) / 1e18;
 
-    // 3. On-chain PRGX balance
+    // 3. PRGX balance via RPC (live, no API cache)
     let prgxBal = BigInt(0);
     try { prgxBal = BigInt(await rpcCall(C.PRGX, encBalOf(TREASURY_ADDR))); } catch {}
     const prgxNum = Number(prgxBal) / 1e18;
 
-    // 4. Update PRGX locked display
     const prgxFmt = v => v >= 1e6 ? (v/1e6).toFixed(2)+'M' : v >= 1e3 ? (v/1e3).toFixed(1)+'K' : v.toFixed(2);
     const prgxEl = document.getElementById('vlt-prgx-val');
     if (prgxEl) prgxEl.textContent = prgxFmt(prgxNum) + ' PRGX';
 
-    // 5. Filter out PRGX from the purged list — it's the locked allocation, not a purged token
-    const purgedRaw = tokens.filter(t => {
+    // 4. Build candidate list (exclude PRGX — it's the locked allocation)
+    const candidates = tokens.filter(t => {
       if (!t.contractAddress) return false;
       if (t.contractAddress.toLowerCase() === C.PRGX.toLowerCase()) return false;
-      try { return BigInt(t.balance || '0') > BigInt(0); } catch { return false; }
+      return true;
     });
 
-    // Add native PLS if present
+    // 4b. Supplemental: scan recent txs TO the treasury to find token
+    // addresses that BlockScout hasn't indexed yet (just transferred).
+    // We extract token contract addresses from recent ERC-20 transfers
+    // where treasury is the recipient.
+    const extraAddrs = new Set(candidates.map(t => t.contractAddress.toLowerCase()));
+    try {
+      // Scan last 50 token transfers received by treasury
+      const txUrl = `${BS2}/addresses/${TREASURY_ADDR}/token-transfers?limit=50&filter=to`;
+      const txR = await fetch(txUrl, {headers:{Accept:'application/json'}});
+      if (txR.ok) {
+        const txJ = await txR.json();
+        for (const tx of txJ?.items || []) {
+          const addr = (tx.token?.address || '').toLowerCase();
+          if (addr && addr !== C.PRGX.toLowerCase() && !extraAddrs.has(addr)) {
+            extraAddrs.add(addr);
+            // Add as candidate with minimal info — RPC verify will fill the balance
+            candidates.push({
+              contractAddress: tx.token?.address || addr,
+              name: tx.token?.name || 'Unknown',
+              symbol: (tx.token?.symbol || '???').trim(),
+              decimals: tx.token?.decimals || '18',
+              type: 'ERC-20'
+            });
+          }
+        }
+      }
+    } catch {}
+
+    // 5. Verify every token balance ON-CHAIN via RPC
+    // This is the authoritative check — eliminates stale API cache entries
+    // and catches newly-arrived tokens that the API hasn't indexed yet.
+    if (listEl) listEl.innerHTML = '<div class="vault-loading"><div class="spin-r" style="margin:0 auto .5rem;"></div><div class="spin-t">Verifying balances on-chain…</div></div>';
+
+    const verified = [];
+    await Promise.all(candidates.map(async t => {
+      try {
+        const liveBal = await rpcCall(t.contractAddress, encBalOf(TREASURY_ADDR));
+        const liveN = BigInt(liveBal || '0');
+        if (liveN > BigInt(0)) {
+          const dec = parseInt(t.decimals) || 18;
+          verified.push({
+            name: t.name || 'Unknown',
+            symbol: (t.symbol || '???').trim(),
+            balance: liveN.toString(),
+            decimals: String(dec),
+            num: Number(liveN) / Math.pow(10, dec),
+            contract: t.contractAddress,
+            type: t.type || 'ERC-20',
+            usd: null
+          });
+        }
+      } catch {}
+    }));
+
+    // 6. Build final purged list
     const purgedList = [];
     if (plsNum > 0.001) {
-      purgedList.push({ name: 'PulseChain', symbol: 'PLS', balance: plsWei, decimals: '18', num: plsNum, contract: null, type: 'NATIVE', usd: null });
+      purgedList.push({ name:'PulseChain', symbol:'PLS', balance:plsWei, decimals:'18', num:plsNum, contract:null, type:'NATIVE', usd:null });
     }
-    purgedRaw.forEach(t => {
-      const dec = parseInt(t.decimals) || 18;
-      let num = 0;
-      try { num = Number(BigInt(t.balance || '0')) / Math.pow(10, dec); } catch {}
-      purgedList.push({ name: t.name || 'Unknown', symbol: (t.symbol || '???').trim(), balance: t.balance || '0', decimals: String(dec), num, contract: t.contractAddress, type: t.type || 'ERC-20', usd: null });
-    });
+    purgedList.push(...verified);
 
-    // 6. Update count
+    // 7. Update stats
     const countEl = document.getElementById('vlt-count');
     if (countEl) countEl.textContent = purgedList.length;
 
-    // 7. Render skeleton list immediately
+    // 8. Render immediately with verified on-chain data
     vaultRenderList(purgedList);
+    daoRenderProposals(purgedList);
 
-    // 8. Fetch USD prices for all purged tokens in one batch
+    // 9. Fetch USD prices asynchronously
     if (purgedList.length > 0) {
-      const addrs = purgedList.map(t => t.type === 'NATIVE' ? C.WPLS.toLowerCase() : (t.contract || '').toLowerCase()).filter(Boolean);
+      const addrs = purgedList.map(t => t.type === 'NATIVE' ? C.WPLS.toLowerCase() : (t.contract||'').toLowerCase()).filter(Boolean);
       const priceMap = await gtFetchBatch([...new Set(addrs)]);
 
       let totalUsd = 0;
       purgedList.forEach(t => {
-        const addr = t.type === 'NATIVE' ? C.WPLS.toLowerCase() : (t.contract || '').toLowerCase();
+        const addr = t.type === 'NATIVE' ? C.WPLS.toLowerCase() : (t.contract||'').toLowerCase();
         const price = priceMap.get(addr) ?? null;
         if (price && price > 0) { t.usd = t.num * price; totalUsd += t.usd; }
         else t.usd = undefined;
       });
 
-      // Also add PRGX USD value to total (optional — it's locked not purged, keep separate)
       const prgxPrice = priceMap.get(C.PRGX.toLowerCase()) ?? null;
-      if (prgxPrice && prgxPrice > 0) {
-        const prgxUsdEl = document.getElementById('vlt-prgx-val');
-        if (prgxUsdEl) prgxUsdEl.textContent = prgxFmt(prgxNum) + ' PRGX ≈ $' + (prgxNum * prgxPrice).toLocaleString('en-US', {maximumFractionDigits:0});
+      if (prgxPrice && prgxPrice > 0 && prgxEl) {
+        prgxEl.textContent = prgxFmt(prgxNum) + ' PRGX ≈ $' + (prgxNum * prgxPrice).toLocaleString('en-US', {maximumFractionDigits:0});
       }
 
       const usdEl = document.getElementById('vlt-usd');
       if (usdEl) {
-        if (totalUsd >= 1000) usdEl.textContent = '$' + (totalUsd/1000).toFixed(1) + 'K';
-        else if (totalUsd > 0) usdEl.textContent = '$' + totalUsd.toFixed(2);
-        else usdEl.textContent = '< $0.01';
+        usdEl.textContent = totalUsd >= 1000 ? '$'+(totalUsd/1000).toFixed(1)+'K'
+          : totalUsd > 0 ? '$'+totalUsd.toFixed(2) : '< $0.01';
       }
 
-      // Sort by USD value desc
-      purgedList.sort((a, b) => (b.usd || 0) - (a.usd || 0));
+      purgedList.sort((a,b) => (b.usd||0) - (a.usd||0));
       vaultRenderList(purgedList);
-      // Render DAO proposals with priced token list
       daoRenderProposals(purgedList);
     }
 
     if (purgedList.length === 0) {
       if (listEl) listEl.innerHTML = '<div class="vault-empty">No purged tokens in treasury yet.<br>Tokens with no swap route are sent here during purges.</div>';
       daoRenderProposals([]);
-      return;
     }
 
   } catch (e) {
     console.error('vaultLoad:', e);
     const listEl = document.getElementById('vlt-purged-list');
-    if (listEl) listEl.innerHTML = '<div class="err-box">Failed to load vault: ' + e.message + '</div>';
+    if (listEl) listEl.innerHTML = '<div class="err-box">Failed to load vault: ' + esc(e.message) + '</div>';
   }
 }
 
@@ -3886,7 +3989,7 @@ async function stDoStake(){
     setTimeout(stRefresh,2000);
     setTimeout(stRefresh,7000);
     setTimeout(()=>{err.style.display='none';err.style.background='';err.style.borderColor='';err.style.color='';},8000);
-    if(wallet)ptsCache.delete(wallet.toLowerCase());
+    if(wallet){ ptsCache.delete(wallet.toLowerCase()); ptsLoaded=false; }
   }catch(e){
     const msg=e?.message||'Transaction failed.';
     err.style.background='';err.style.borderColor='';err.style.color='';
@@ -3904,7 +4007,7 @@ async function stDoClaim(){
     btn.textContent='✅ Claimed!';
     setTimeout(()=>{btn.textContent='💰 Claim Rewards';btn.disabled=false;},2500);
     setTimeout(stRefresh,4000);
-    if(wallet)ptsCache.delete(wallet.toLowerCase());
+    if(wallet){ ptsCache.delete(wallet.toLowerCase()); ptsLoaded=false; }
   }catch(e){err.textContent=e?.message||'Claim failed.';err.style.display='block';btn.disabled=false;btn.textContent='💰 Claim Rewards';}
 }
 
@@ -3979,6 +4082,7 @@ async function stCompleteUnstake(){
     setTimeout(()=>{btn.disabled=false;btn.textContent='✅ Complete Unstake — Withdraw PRGX';},2500);
     setTimeout(stRefresh,3000);
     setTimeout(stRefresh,7000);
+    if(wallet){ ptsCache.delete(wallet.toLowerCase()); ptsLoaded=false; }
   }catch(e){err.textContent=e?.message||'Withdrawal failed.';err.style.display='block';btn.disabled=false;btn.textContent='✅ Complete Unstake — Withdraw PRGX';}
 }
 
