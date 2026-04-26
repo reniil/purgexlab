@@ -1718,7 +1718,13 @@ const IS_LOCAL = (()=>{
   return ['localhost','127.0.0.1','::1'].includes(host);
 })();
 // CORS proxy for localhost testing - GeckoTerminal/BlockScout block CORS on localhost
-const CORS_PROXY = IS_LOCAL ? 'https://api.allorigins.win/raw?url=' : '';
+// Try multiple proxy services in case one fails
+const CORS_PROXIES = [
+  'https://api.allorigins.win/raw?url=',
+  'https://corsproxy.io/?',
+  'https://cors-anywhere.herokuapp.com/'
+];
+const CORS_PROXY = IS_LOCAL ? CORS_PROXIES[0] : '';
 // APIs blocked by CORS on localhost/file — RPC is NOT in this list
 const NO_CORS_API = IS_FILE;
 
@@ -1728,6 +1734,26 @@ const NO_CORS_API = IS_FILE;
 function esc(s){
   if(s==null)return'';
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// Helper to fetch through CORS proxy with fallback
+async function fetchWithProxy(url, options={}){
+  if(!IS_LOCAL){
+    // No proxy needed on production
+    return fetch(url, options);
+  }
+  // Try each proxy in order
+  for(const proxy of CORS_PROXIES){
+    try{
+      const proxyUrl = proxy.includes('allorigins') ? proxy + encodeURIComponent(url) : proxy + url;
+      const res = await fetch(proxyUrl, options);
+      if(res.ok) return res;
+    }catch(e){
+      console.warn(`Proxy ${proxy} failed:`, e.message);
+    }
+  }
+  // All proxies failed, try direct (will likely fail due to CORS)
+  return fetch(url, options);
 }
 
 // ─── CONTRACTS ────────────────────────────────────────────────────
@@ -1944,16 +1970,15 @@ async function gtFetchBatch(addresses) {
   for (let i = 0; i < toFetch.length; i += CHUNK) {
     const chunk = toFetch.slice(i, i + CHUNK);
     const targetUrl = `${GT_API}/networks/${GT_NETWORK}/tokens/multi/${chunk.join(',')}`;
-    const url = CORS_PROXY ? CORS_PROXY + encodeURIComponent(targetUrl) : targetUrl;
     try {
-      const res = await fetch(url, {
+      const res = await fetchWithProxy(targetUrl, {
         headers: { 'Accept': 'application/json;version=20230302' }
       });
       if (!res.ok) {
         // If 429 rate limited, wait 2s and try once more
         if (res.status === 429) {
           await new Promise(r => setTimeout(r, 2000));
-          const res2 = await fetch(url, { headers: { 'Accept': 'application/json;version=20230302' } });
+          const res2 = await fetchWithProxy(targetUrl, { headers: { 'Accept': 'application/json;version=20230302' } });
           if (!res2.ok) throw new Error('Rate limited');
           const j2 = await res2.json();
           processGtResponse(j2);
@@ -2065,8 +2090,7 @@ async function homeRefresh(){
     }
     // fetch pool data for volume/mcap
     const targetUrl = `${GT_API}/networks/${GT_NETWORK}/tokens/${C.PRGX.toLowerCase()}`;
-    const poolUrl = CORS_PROXY ? CORS_PROXY + encodeURIComponent(targetUrl) : targetUrl;
-    const r=await fetch(poolUrl);
+    const r=await fetchWithProxy(targetUrl);
     if(r.ok){
       const j=await r.json();
       const attr=j?.data?.attributes;
@@ -2381,9 +2405,9 @@ async function fetchBS2Tokens(addr){
   let nextPage=null;
   const targetBase=`${BS2}/addresses/${addr}/tokens?type=ERC-20%2CERC-721%2CERC-1155`;
   try{
-    let url=CORS_PROXY ? CORS_PROXY + encodeURIComponent(targetBase) : targetBase;
+    let url=targetBase;
     for(let page=0;page<20;page++){// max 20 pages = 2000 tokens
-      const r=await fetch(url,{headers:{Accept:'application/json'}});
+      const r=await fetchWithProxy(url,{headers:{Accept:'application/json'}});
       if(!r.ok)break;
       const j=await r.json();
       const items=j?.items||[];
@@ -2404,8 +2428,7 @@ async function fetchBS2Tokens(addr){
       if(!np||!items.length)break;
       // Build next URL with page params
       const params=new URLSearchParams(np).toString();
-      const nextTarget=`${targetBase}&${params}`;
-      url=CORS_PROXY ? CORS_PROXY + encodeURIComponent(nextTarget) : nextTarget;
+      url=`${targetBase}&${params}`;
     }
   }catch(e){if(!IS_FILE) console.warn('BlockScout v2 tokens failed:',e.message);}
   return results;
@@ -3203,18 +3226,16 @@ async function ptsFetchWallet(addr){
   // Paginate a BlockScout v2 endpoint, collect all items up to maxPages
   async function fetchAll(baseUrl, maxPages=15){
     const all=[];
-    let targetUrl=baseUrl;
-    let url=CORS_PROXY ? CORS_PROXY + encodeURIComponent(targetUrl) : targetUrl;
+    let url=baseUrl;
     for(let p=0;p<maxPages;p++){
       let j;
-      try{ const r=await fetch(url,{headers:{Accept:'application/json'}}); j=await r.json(); }catch{ break; }
+      try{ const r=await fetchWithProxy(url,{headers:{Accept:'application/json'}}); j=await r.json(); }catch{ break; }
       const batch=j?.items||[];
       all.push(...batch);
       const np=j?.next_page_params;
       if(!np||!batch.length) break;
-      const base=targetUrl.split('?')[0];
-      const nextTarget=`${base}?${new URLSearchParams({...np,limit:50})}`;
-      url=CORS_PROXY ? CORS_PROXY + encodeURIComponent(nextTarget) : nextTarget;
+      const base=baseUrl.split('?')[0];
+      url=`${base}?${new URLSearchParams({...np,limit:50})}`;
     }
     return all;
   }
