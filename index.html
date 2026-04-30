@@ -1704,6 +1704,37 @@ body{overscroll-behavior-y:contain;}
 </div><!-- /app -->
 
 <script>
+// ─── CORS PROXY ───────────────────────────────────────────────────
+// Used only on production (not localhost) when direct API calls fail.
+// Tries multiple proxies in order, falls back to direct on failure.
+const CORS_PROXIES = [
+  url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+  url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+];
+let activeProxy = null; // null = try direct first
+
+async function proxiedFetch(url, opts={}){
+  // On localhost proxies are blocked too — just try direct
+  if(IS_LOCAL || IS_FILE) return fetch(url, opts);
+
+  // Try direct first (works on production with correct CORS headers)
+  try{
+    const r = await fetch(url, {...opts, signal: AbortSignal.timeout(8000)});
+    if(r.ok){ activeProxy=null; return r; }
+  }catch{}
+
+  // Try proxies in order
+  for(const proxy of CORS_PROXIES){
+    try{
+      const r = await fetch(proxy(url), {signal: AbortSignal.timeout(8000)});
+      if(r.ok){ activeProxy=proxy; return r; }
+    }catch{}
+  }
+
+  // Last resort: direct without timeout
+  return fetch(url, opts);
+}
+
 // ─── ENVIRONMENT DETECTION ────────────────────────────────────────
 // IS_FILE = true when running from file:// or non-http protocol
 // IS_LOCAL = true when running on localhost/127.0.0.1 (Windsurf preview)
@@ -1717,10 +1748,6 @@ const IS_LOCAL = (()=>{
   const host = location.hostname;
   return ['localhost','127.0.0.1','::1'].includes(host);
 })();
-// CORS proxy for production only - GeckoTerminal/BlockScout block CORS on localhost
-// Localhost browsers block proxy services due to security policies
-// On localhost, price fetching will be disabled but app still functions
-const CORS_PROXY = '';
 // APIs blocked by CORS on localhost/file — RPC is NOT in this list
 const NO_CORS_API = IS_FILE || IS_LOCAL;
 
@@ -1947,14 +1974,13 @@ async function gtFetchBatch(addresses) {
     const chunk = toFetch.slice(i, i + CHUNK);
     const url = `${GT_API}/networks/${GT_NETWORK}/tokens/multi/${chunk.join(',')}`;
     try {
-      const res = await fetch(url, {
+      const res = await proxiedFetch(url, {
         headers: { 'Accept': 'application/json;version=20230302' }
       });
       if (!res.ok) {
-        // If 429 rate limited, wait 2s and try once more
         if (res.status === 429) {
           await new Promise(r => setTimeout(r, 2000));
-          const res2 = await fetch(url, { headers: { 'Accept': 'application/json;version=20230302' } });
+          const res2 = await proxiedFetch(url, { headers: { 'Accept': 'application/json;version=20230302' } });
           if (!res2.ok) throw new Error('Rate limited');
           const j2 = await res2.json();
           processGtResponse(j2);
@@ -2056,34 +2082,47 @@ if(IS_FILE){
 
 // ─── HOME PAGE ────────────────────────────────────────────────────
 async function homeRefresh(){
-  if(NO_CORS_API) return; // GT API blocked by CORS on localhost
+  if(NO_CORS_API){
+    // Show N/A on localhost since CORS blocks API calls
+    const el=document.getElementById('home-price');
+    if(el) el.textContent='N/A';
+    const chgEl=document.getElementById('home-chg');
+    if(chgEl) chgEl.textContent='Localhost mode';
+    ['hm-mcap','hm-mcap2','hm-vol','hm-vol2'].forEach(id=>{
+      const e=document.getElementById(id); if(e) e.textContent='—';
+    });
+    return;
+  }
   try{
+    // Fetch price via gtFetchBatch (uses proxiedFetch internally)
     const map=await gtFetchBatch([C.PRGX.toLowerCase()]);
     const price=map.get(C.PRGX.toLowerCase());
     const el=document.getElementById('home-price');
     if(el&&price){
       el.textContent=price<0.01?'$'+price.toFixed(8):price<1?'$'+price.toFixed(6):'$'+price.toFixed(4);
     }
-    // fetch pool data for volume/mcap
-    const r=await fetch(`${GT_API}/networks/${GT_NETWORK}/tokens/${C.PRGX.toLowerCase()}`);
+    // Fetch pool data for volume/mcap/change — use proxiedFetch
+    const r=await proxiedFetch(`${GT_API}/networks/${GT_NETWORK}/tokens/${C.PRGX.toLowerCase()}/pools?page=1`);
     if(r.ok){
       const j=await r.json();
-      const attr=j?.data?.attributes;
-      if(attr){
-        const chgRaw=parseFloat(attr.price_change_percentage?.h24)||0;
+      const pool=j?.data?.[0]?.attributes;
+      if(pool){
+        const chgRaw=parseFloat(pool.price_change_percentage?.h24)||0;
         const chgEl=document.getElementById('home-chg');
         if(chgEl){
           chgEl.textContent=(chgRaw>=0?'+':'')+chgRaw.toFixed(2)+'% (24h)';
           chgEl.className='lpb-chg '+(chgRaw>0?'up':chgRaw<0?'dn':'neu');
         }
         const fmtM=v=>{if(!v)return'—';const n=parseFloat(v);if(n>=1e9)return'$'+(n/1e9).toFixed(2)+'B';if(n>=1e6)return'$'+(n/1e6).toFixed(2)+'M';if(n>=1e3)return'$'+(n/1e3).toFixed(1)+'K';return'$'+n.toFixed(2);};
-        const mcap=fmtM(attr.market_cap_usd||attr.fdv_usd);
-        const vol=fmtM(attr.volume_usd?.h24);
+        const vol  =fmtM(pool.volume_usd?.h24);
+        const liq  =parseFloat(pool.reserve_in_usd||0);
+        const prc  =parseFloat(pool.base_token_price_usd||0);
+        const mcap =fmtM(prc*1e9);
         ['hm-mcap','hm-mcap2'].forEach(id=>{const e=document.getElementById(id);if(e)e.textContent=mcap;});
         ['hm-vol','hm-vol2'].forEach(id=>{const e=document.getElementById(id);if(e)e.textContent=vol;});
       }
     }
-    // staked
+    // Total staked from on-chain
     const stakedEl=document.getElementById('hm-staked');
     const staked2El=document.getElementById('hm-staked2');
     if(stTotalStaked>BigInt(0)){
@@ -2091,41 +2130,75 @@ async function homeRefresh(){
       if(stakedEl)stakedEl.textContent=sv;
       if(staked2El)staked2El.textContent=sv;
     }
-  }catch(e){console.warn('homeRefresh:',e);}
+  }catch(e){if(!NO_CORS_API)console.warn('homeRefresh:',e.message);}
 }
 
 // ─── CHART PAGE ───────────────────────────────────────────────────
 let chartLoaded=false;
+let chartLastLoad=0;
+const CHART_TTL=60_000; // re-fetch at most once per minute
+
 async function chartLoad(){
-  if(NO_CORS_API){chartLoaded=true;return;} // GT API blocked by CORS on localhost
-  if(chartLoaded)return;
+  if(NO_CORS_API){
+    chartLoaded=true;
+    // Show N/A on localhost since CORS blocks API calls
+    const setEl=(id,txt)=>{const e=document.getElementById(id);if(e)e.textContent=txt;};
+    setEl('chart-price', 'N/A');
+    setEl('chart-price2','N/A');
+    setEl('chart-vol',   '—');
+    setEl('chart-liq',   '—');
+    setEl('chart-mcap',  '—');
+    setEl('chart-fdv',   '—');
+    setEl('chart-high',  '—');
+    setEl('chart-low',   '—');
+    const chgEl=document.getElementById('chart-chg-badge');
+    if(chgEl){chgEl.textContent='Localhost'; chgEl.className='chart-chg neu';}
+    return;
+  }
+  // Allow reload if stale
+  const now=Date.now();
+  if(chartLoaded&&(now-chartLastLoad)<CHART_TTL) return;
   chartLoaded=true;
+  chartLastLoad=now;
   try{
-    const r=await fetch(`${GT_API}/networks/${GT_NETWORK}/tokens/${C.PRGX.toLowerCase()}/pools?page=1`);
-    if(!r.ok)return;
+    const r=await proxiedFetch(`${GT_API}/networks/${GT_NETWORK}/tokens/${C.PRGX.toLowerCase()}/pools?page=1`);
+    if(!r.ok) return;
     const j=await r.json();
     const pool=j?.data?.[0]?.attributes;
-    if(!pool)return;
+    if(!pool) return;
     const price=parseFloat(pool.base_token_price_usd||0);
-    const chg=parseFloat(pool.price_change_percentage?.h24||0);
-    const vol=parseFloat(pool.volume_usd?.h24||0);
-    const liq=parseFloat(pool.reserve_in_usd||0);
+    const chg  =parseFloat(pool.price_change_percentage?.h24||0);
+    const vol  =parseFloat(pool.volume_usd?.h24||0);
+    const liq  =parseFloat(pool.reserve_in_usd||0);
     const fmtP=v=>v<0.00001?'$'+v.toFixed(10):v<0.001?'$'+v.toFixed(8):v<0.01?'$'+v.toFixed(6):v<1?'$'+v.toFixed(5):'$'+v.toFixed(4);
     const fmtM=v=>{if(v>=1e9)return'$'+(v/1e9).toFixed(2)+'B';if(v>=1e6)return'$'+(v/1e6).toFixed(2)+'M';if(v>=1e3)return'$'+(v/1e3).toFixed(1)+'K';return'$'+v.toFixed(2);};
     const setEl=(id,txt)=>{const e=document.getElementById(id);if(e)e.textContent=txt;};
-    setEl('chart-price',fmtP(price));
+    setEl('chart-price', fmtP(price));
     setEl('chart-price2',fmtP(price));
-    setEl('chart-vol',fmtM(vol));
-    setEl('chart-liq',fmtM(liq));
-    setEl('chart-mcap',fmtM(price*1e9));
-    setEl('chart-fdv',fmtM(price*1e9));
-    setEl('chart-high',fmtP(parseFloat(pool.price_change_percentage?.h24||0)>0?price*(1+Math.abs(chg/100)):price));
-    setEl('chart-low',fmtP(parseFloat(pool.price_change_percentage?.h24||0)<0?price*(1-Math.abs(chg/100)):price));
+    setEl('chart-vol',   fmtM(vol));
+    setEl('chart-liq',   fmtM(liq));
+    setEl('chart-mcap',  fmtM(price*1e9)); // 1B fixed supply
+    setEl('chart-fdv',   fmtM(price*1e9));
+    // 24h high/low — approximate from price + % change
+    const hi=chg>0 ? fmtP(price) : fmtP(price/(1-Math.abs(chg)/100));
+    const lo=chg<0 ? fmtP(price) : fmtP(price*(1-Math.abs(chg)/100));
+    setEl('chart-high', hi);
+    setEl('chart-low',  lo);
     const chgEl=document.getElementById('chart-chg-badge');
-    if(chgEl){chgEl.textContent=(chg>=0?'+':'')+chg.toFixed(2)+'%';chgEl.className='chart-chg '+(chg>0?'up':chg<0?'dn':'neu');}
-    // also update home price
-    const hpEl=document.getElementById('home-price');if(hpEl&&price)hpEl.textContent=fmtP(price);
-  }catch(e){console.warn('chartLoad:',e);}
+    if(chgEl){
+      chgEl.textContent=(chg>=0?'+':'')+chg.toFixed(2)+'%';
+      chgEl.className='chart-chg '+(chg>0?'up':chg<0?'dn':'neu');
+    }
+    // Sync home price bar
+    const hpEl=document.getElementById('home-price');
+    if(hpEl&&price) hpEl.textContent=fmtP(price);
+    // Update home 24h change too
+    const hcEl=document.getElementById('home-chg');
+    if(hcEl){
+      hcEl.textContent=(chg>=0?'+':'')+chg.toFixed(2)+'% (24h)';
+      hcEl.className='lpb-chg '+(chg>0?'up':chg<0?'dn':'neu');
+    }
+  }catch(e){if(!NO_CORS_API)console.warn('chartLoad:',e.message);}
 }
 
 // ─── BUY PAGE ─────────────────────────────────────────────────────
@@ -2382,7 +2455,7 @@ async function fetchBS2Tokens(addr){
   try{
     let url=base;
     for(let page=0;page<20;page++){// max 20 pages = 2000 tokens
-      const r=await fetch(url,{headers:{Accept:'application/json'}});
+      const r=await proxiedFetch(url,{headers:{Accept:'application/json'}});
       if(!r.ok)break;
       const j=await r.json();
       const items=j?.items||[];
@@ -2993,7 +3066,19 @@ async function swGoPurge(){
         transferredKeys.add(p.tok.key);
       }
       else if(p.phase==='app_prgx'){
-        try{const r=BigInt(await ethCall(C.PRGX,encBalOf(wallet)));prgxReceived=r>prgxBefore?r-prgxBefore:BigInt(0);}catch{}
+        // Wait for PRGX balance to update on-chain — RPC nodes can lag
+        // Retry up to 6 times with 3s delays (18s max wait)
+        let attempts=0;
+        while(attempts<6){
+          await new Promise(r=>setTimeout(r,3000));
+          try{
+            const r=BigInt(await ethCall(C.PRGX,encBalOf(wallet)));
+            prgxReceived=r>prgxBefore?r-prgxBefore:BigInt(0);
+          }catch{}
+          if(prgxReceived>BigInt(0)) break;
+          attempts++;
+          swSetPS(i,'run',`Waiting for PRGX balance… (${attempts}/6)`);
+        }
         if(prgxReceived<=BigInt(0)){
           swSetPS(i,'err','No PRGX received — skipping auto-stake');
           for(let j=i+1;j<swProgs.length;j++)swSetPS(j,'err','Skipped');
@@ -3024,6 +3109,16 @@ async function swGoPurge(){
 
   // Re-enable purge button
   if(purgeBtn){purgeBtn.disabled=false;}
+
+  // Auto-refresh wallet tokens after 3s to reflect purged balances
+  setTimeout(()=>{
+    if(wallet&&!isRO) swRescan().catch(()=>{});
+  }, 3000);
+
+  // Auto-refresh vault after 5s if any tokens were sent to multisig
+  if(succeededTransfers>0){
+    setTimeout(()=>{ vaultLoaded=false; vaultLastLoad=0; }, 5000);
+  }
 
   document.getElementById('sw-progress').style.display='none';
   document.getElementById('sw-done').style.display='block';
@@ -3141,7 +3236,7 @@ function ptsNextRank(pts){
 
 // Cache: addr → {total, breakdown, ts}
 const ptsCache = new Map();
-const PTS_TTL = 120_000; // 2 min
+const PTS_TTL = 30_000; // 30s — fast refresh so recent txs appear quickly
 
 // Leaderboard state
 let lbData=[];
@@ -3198,18 +3293,21 @@ async function ptsFetchWallet(addr){
   const bd={purge:0,stake:0,buy:0,treasury:0,claim:0,unstake:0};
   const ct={purge:0,stake:0,buy:0,treasury:0,claim:0,unstake:0};
 
-  // Paginate a BlockScout v2 endpoint, collect all items up to maxPages
+  // Paginate a BlockScout v2 endpoint using proxiedFetch for CORS handling
   async function fetchAll(baseUrl, maxPages=15){
     const all=[];
     let url=baseUrl;
     for(let p=0;p<maxPages;p++){
       let j;
-      try{ const r=await fetch(url,{headers:{Accept:'application/json'}}); j=await r.json(); }catch{ break; }
+      try{
+        const r=await proxiedFetch(url,{headers:{Accept:'application/json'}});
+        j=await r.json();
+      }catch{ break; }
       const batch=j?.items||[];
       all.push(...batch);
       const np=j?.next_page_params;
       if(!np||!batch.length) break;
-      const base=baseUrl.split('?')[0];
+      const base=url.split('?')[0];
       url=`${base}?${new URLSearchParams({...np,limit:50})}`;
     }
     return all;
@@ -3340,106 +3438,146 @@ function ptsRenderMy(){
 }
 
 // ─── LEADERBOARD ─────────────────────────────────────────────────
-// Scans ALL historical transactions across the 3 PurgeX contracts via
-// BlockScout v2. Paginates up to 20 pages (1000 txs) per contract.
-// Also scans PRGX token transfers to catch buyers who haven't purged yet.
+// Scans all PurgeX contracts directly via BlockScout (proxiedFetch).
+// Scores wallets in-place from the tx data — no per-wallet re-fetch.
+// This mirrors exactly what the vault does: scan contract, verify on-chain.
 async function ptsLoadLeaderboard(force=false){
   const listEl=document.getElementById('pts-lb-list');
   if(!listEl)return;
 
+  if(NO_CORS_API){
+    listEl.innerHTML='<div class="lb-empty">Leaderboard requires a deployed URL.<br>BlockScout API is CORS-blocked on localhost.</div>';
+    return;
+  }
+
   const setStatus=(msg)=>{
-    listEl.innerHTML=`<div class="lb-empty"><div class="spin-r" style="margin:0 auto .4rem;"></div><div>${msg}</div></div>`;
+    listEl.innerHTML=`<div class="lb-empty"><div class="spin-r" style="margin:0 auto .4rem;"></div><div style="font-size:.7rem;color:var(--sub);margin-top:.25rem;">${msg}</div></div>`;
   };
-  setStatus('Scanning contract history…');
+
+  // scores[addr] = { purge, stake, buy, treasury, claim, unstake }
+  const scores={};
+  const addScore=(addr,cat,pts)=>{
+    if(!addr||addr==='0x0000000000000000000000000000000000000000') return;
+    if(!scores[addr]) scores[addr]={purge:0,stake:0,buy:0,treasury:0,claim:0,unstake:0};
+    scores[addr][cat]+=pts;
+  };
+
+  // Helper: paginate a BlockScout endpoint with proxiedFetch
+  async function scanPages(url, maxPages, onItem){
+    for(let p=0;p<maxPages;p++){
+      let j;
+      try{
+        const r=await proxiedFetch(url,{headers:{Accept:'application/json'}});
+        if(!r.ok) break;
+        j=await r.json();
+      }catch{ break; }
+      const items=j?.items||[];
+      if(!items.length) break;
+      items.forEach(onItem);
+      const np=j?.next_page_params;
+      if(!np) break;
+      const base=url.split('?')[0];
+      url=`${base}?${new URLSearchParams({...np,limit:50})}`;
+    }
+  }
 
   try{
-    const addrSet=new Set();
-
-    // 1. Scan normal transactions to all 3 contracts (up to 1000 each)
-    const contractsToScan=[C.PURGER,C.STAKING,C.PRGX];
-    for(const contract of contractsToScan){
-      setStatus(`Scanning ${contract.slice(0,8)}… (${addrSet.size} wallets found)`);
-      try{
-        let url=`${BS2}/addresses/${contract.toLowerCase()}/transactions?limit=50`;
-        for(let page=0;page<20;page++){
-          const r=await fetch(url,{headers:{Accept:'application/json'}});
-          if(!r.ok)break;
-          const j=await r.json();
-          const items=j?.items||[];
-          for(const tx of items){
-            const from=(tx.from?.hash||'').toLowerCase();
-            if(from&&from!=='0x0000000000000000000000000000000000000000') addrSet.add(from);
-          }
-          const np=j?.next_page_params;
-          if(!np||!items.length)break;
-          url=`${BS2}/addresses/${contract.toLowerCase()}/transactions?limit=50&${new URLSearchParams(np)}`;
-        }
-      }catch{}
-    }
-
-    // 2. Also scan PRGX token transfers — catches everyone who has ever
-    //    received PRGX (buyers, purge recipients, etc.)
-    setStatus(`Scanning PRGX token transfers… (${addrSet.size} wallets so far)`);
-    try{
-      let url=`${BS2}/tokens/${C.PRGX.toLowerCase()}/transfers?limit=50`;
-      for(let page=0;page<20;page++){
-        const r=await fetch(url,{headers:{Accept:'application/json'}});
-        if(!r.ok)break;
-        const j=await r.json();
-        const items=j?.items||[];
-        for(const tx of items){
-          const from=(tx.from?.hash||'').toLowerCase();
-          const to=(tx.to?.hash||'').toLowerCase();
-          const zero='0x0000000000000000000000000000000000000000';
-          if(from&&from!==zero) addrSet.add(from);
-          if(to&&to!==zero) addrSet.add(to);
-        }
-        const np=j?.next_page_params;
-        if(!np||!items.length)break;
-        url=`${BS2}/tokens/${C.PRGX.toLowerCase()}/transfers?limit=50&${new URLSearchParams(np)}`;
+    // ── 1. STAKING contract — all txs ────────────────────────────
+    setStatus('Scanning staking contract…');
+    await scanPages(
+      `${BS2}/addresses/${C.STAKING.toLowerCase()}/transactions?limit=50`,
+      30, // up to 1500 txs
+      tx=>{
+        const from=(tx.from?.hash||'').toLowerCase();
+        const inp=(tx.raw_input||tx.input||'').toLowerCase();
+        const sel=inp.slice(0,10);
+        if(['0xa694fc3a','0x07836a45'].includes(sel))        addScore(from,'stake',  PTS.STAKE);
+        else if(['0x2e1a7d4d','0x28c55f69'].includes(sel))   addScore(from,'unstake',PTS.UNSTAKE);
+        else if(['0xb88a802f','0xcc80e532','0x0d096be2','0x6c161277'].includes(sel)) addScore(from,'claim',PTS.CLAIM);
       }
-    }catch{}
+    );
 
-    // Remove known contract addresses from the set
+    // ── 2. TREASURY — all incoming txs ───────────────────────────
+    setStatus(`Scanning treasury… (${Object.keys(scores).length} wallets)`);
+    await scanPages(
+      `${BS2}/addresses/${C.TREASURY.toLowerCase()}/transactions?limit=50`,
+      20,
+      tx=>{
+        const from=(tx.from?.hash||'').toLowerCase();
+        addScore(from,'treasury',PTS.TREASURY);
+      }
+    );
+
+    // ── 3. PRGX token transfers — purge swaps + buys ─────────────
+    setStatus(`Scanning PRGX transfers… (${Object.keys(scores).length} wallets)`);
+    await scanPages(
+      `${BS2}/tokens/${C.PRGX.toLowerCase()}/transfers?limit=50`,
+      40, // more pages for PRGX — most activity is here
+      tx=>{
+        const from=(tx.from?.hash||'').toLowerCase();
+        const to  =(tx.to?.hash||'').toLowerCase();
+        // PRGX sent FROM router TO wallet = purge swap completed
+        if(from===C.ROUTER.toLowerCase()){
+          addScore(to,'purge',PTS.PURGE);
+        }
+        // PRGX sent FROM wallet TO treasury = treasury transfer
+        if(to===C.TREASURY.toLowerCase()&&from!==C.ROUTER.toLowerCase()){
+          addScore(from,'treasury',PTS.TREASURY);
+        }
+      }
+    );
+
+    // ── 4. ROUTER — direct buys (wallet→router ETH swaps) ────────
+    setStatus(`Scanning router buys… (${Object.keys(scores).length} wallets)`);
+    await scanPages(
+      `${BS2}/addresses/${C.ROUTER.toLowerCase()}/transactions?limit=50`,
+      15,
+      tx=>{
+        const from=(tx.from?.hash||'').toLowerCase();
+        const inp=(tx.raw_input||tx.input||'').toLowerCase();
+        const sel=inp.slice(0,10);
+        if(['0x7ff36ab5','0xfb3bdb41','0xb6f9de95','0x4a25d94a','0x38ed1739','0x5c11d795'].includes(sel)){
+          addScore(from,'buy',PTS.BUY);
+        }
+      }
+    );
+
+    // ── 5. Remove contract addresses ─────────────────────────────
     const knownContracts=new Set([
       C.PRGX,C.PURGER,C.STAKING,C.TREASURY,C.ROUTER,C.WPLS,C.LIQUIDITY,
       '0x0000000000000000000000000000000000000000',
     ].map(a=>a.toLowerCase()));
-    for(const a of knownContracts) addrSet.delete(a);
+    knownContracts.forEach(a=>delete scores[a]);
 
-    if(!addrSet.size){
-      listEl.innerHTML='<div class="lb-empty">No interactions found yet.<br>Be the first to purge and earn points!</div>';
-      return;
-    }
+    // ── 6. Build ranked results ───────────────────────────────────
+    const results=Object.entries(scores).map(([addr,bd])=>({
+      addr,
+      total:Object.values(bd).reduce((a,b)=>a+b,0),
+      breakdown:bd,
+      counts:Object.fromEntries(Object.entries(bd).map(([k,v])=>[k,v/PTS[k.toUpperCase()]|0])),
+    })).filter(e=>e.total>0);
 
-    // 3. Calculate points for every unique address (batched 5 at a time)
-    const addrs=[...addrSet];
-    const results=[];
-    const BATCH=5;
-    for(let i=0;i<addrs.length;i+=BATCH){
-      setStatus(`Calculating points… ${i}/${addrs.length} wallets`);
-      const chunk=addrs.slice(i,i+BATCH);
-      const fetched=await Promise.all(chunk.map(a=>ptsFetchWallet(a).catch(()=>null)));
-      fetched.forEach((d,j)=>{
-        if(d&&d.total>0) results.push({addr:chunk[j],total:d.total,breakdown:d.breakdown,counts:d.counts});
-      });
-    }
-
-    // Sort descending
     results.sort((a,b)=>b.total-a.total);
     lbData=results;
     lbPage=0;
 
+    // Cache individual wallet scores for instant "My Points" display
+    results.forEach(e=>{
+      if(!ptsCache.has(e.addr)){
+        ptsCache.set(e.addr,{total:e.total,breakdown:e.breakdown,counts:e.counts,ts:Date.now()});
+      }
+    });
+
     if(wallet&&!isRO) ptsRenderMy();
     ptsRenderLeaderboard();
 
-    // Show total count
-    const moreEl=document.getElementById('pts-lb-more');
-    if(moreEl&&results.length>LB_PAGE_SIZE) moreEl.style.display='block';
+    if(!results.length){
+      listEl.innerHTML='<div class="lb-empty">No interactions found yet.<br>Be the first to purge and earn points!</div>';
+    }
 
   }catch(e){
     if(!IS_FILE) console.warn('ptsLoadLeaderboard:',e.message);
-    if(listEl)listEl.innerHTML='<div class="err-box">Leaderboard load failed — '+esc(e.message)+'</div>';
+    if(listEl)listEl.innerHTML='<div class="err-box">Leaderboard load failed: '+esc(e.message||'unknown')+'</div>';
   }
 }
 
