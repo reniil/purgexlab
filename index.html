@@ -2227,7 +2227,7 @@ function buyFlip(){
 async function buyUpdateBals(){
   if(!wallet||isRO)return;
   try{
-    const plsR=await fetch(`${API}?module=account&action=balance&address=${wallet}`);
+    const plsR=await proxiedFetch(`${API}?module=account&action=balance&address=${wallet}`);
     const plsD=await plsR.json();
     const plsBal=Number(BigInt(plsD.result||'0'))/1e18;
     const prgxBal=Number(BigInt(await rpcCall(C.PRGX,encBalOf(wallet))))/1e18;
@@ -2527,14 +2527,15 @@ async function swRescan(){
     // ── 1. PLS native balance (RPC — works everywhere) ──────────────
     let plsWei='0',plsNum=0;
     try{
-      if(NO_CORS_API){
-        // Use eth_getBalance via RPC on localhost
+      if(IS_FILE){
+        // Use eth_getBalance via RPC on file:// protocol
         const res=await fetch(RPC,{method:'POST',headers:{'Content-Type':'application/json'},
           body:JSON.stringify({jsonrpc:'2.0',id:rpcId++,method:'eth_getBalance',params:[wallet,'latest']})});
         const j=await res.json();
         plsWei=BigInt(j.result||'0').toString();
       }else{
-        const bR=await fetch(`${API}?module=account&action=balance&address=${wallet}`);
+        // Use proxiedFetch for PulseScan API (handles localhost CORS)
+        const bR=await proxiedFetch(`${API}?module=account&action=balance&address=${wallet}`);
         const bD=await bR.json();
         plsWei=bD.result||'0';
       }
@@ -2544,11 +2545,11 @@ async function swRescan(){
     // ── 2. Token discovery ────────────────────────────────────────
     const merged=new Map();
 
-    if(!NO_CORS_API){
-      // Full API scan when available
+    if(!IS_FILE){
+      // Full API scan when available (localhost uses proxiedFetch)
       let src1=[];
       try{
-        const tR=await fetch(`${API}?module=account&action=tokenlist&address=${wallet}`);
+        const tR=await proxiedFetch(`${API}?module=account&action=tokenlist&address=${wallet}`);
         const tD=await tR.json();
         src1=(tD.status==='1'&&Array.isArray(tD.result))?tD.result:[];
       }catch(e){console.warn('PulseScan tokenlist failed:',e.message);}
@@ -2621,8 +2622,8 @@ async function swRescan(){
     document.getElementById('sw-s-dust').textContent=dustCount;
     document.getElementById('sw-s-pls').textContent=fmtBal(plsWei,'18');
 
-    if(NO_CORS_API&&swToks.length===0){
-      document.getElementById('sw-tok-list').innerHTML='<div class="ibox amber" style="margin-top:.5rem;">⚠️ Token list requires a deployed URL — CORS blocks the scan API on localhost. Deploy to Windsurf to see your full wallet.</div>';
+    if(IS_FILE&&swToks.length===0){
+      document.getElementById('sw-tok-list').innerHTML='<div class="ibox amber" style="margin-top:.5rem;">⚠️ Token list requires http://localhost or deployed URL.</div>';
       return;
     }
 
@@ -2639,7 +2640,7 @@ async function swRescan(){
 }
 
 async function swFetchPrices(){
-  if(NO_CORS_API) return; // GT API blocked by CORS on localhost
+  if(IS_FILE) return; // GT API blocked on file:// protocol
   // Collect all non-NFT token addresses (use WPLS address for native PLS)
   const tokensToPrice = swToks
     .map((t, i) => ({
@@ -3037,7 +3038,7 @@ async function swGoPurge(){
         // Re-read live PLS balance at execution time
         let livePls=BigInt(p.tok.balance);
         try{
-          const r=await fetch(`${API}?module=account&action=balance&address=${wallet}`);
+          const r=await proxiedFetch(`${API}?module=account&action=balance&address=${wallet}`);
           const d=await r.json();
           if(d.result)livePls=BigInt(d.result);
         }catch{}
