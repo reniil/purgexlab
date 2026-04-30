@@ -1748,8 +1748,8 @@ const IS_LOCAL = (()=>{
   const host = location.hostname;
   return ['localhost','127.0.0.1','::1'].includes(host);
 })();
-// APIs blocked by CORS on localhost/file — RPC is NOT in this list
-const NO_CORS_API = IS_FILE || IS_LOCAL;
+// APIs blocked by CORS on file:// protocol (localhost can use proxies)
+const NO_CORS_API = IS_FILE;
 
 // ─── HTML ESCAPE (XSS prevention) ─────────────────────────────────
 // All token names/symbols from external APIs must be escaped before
@@ -1953,7 +1953,7 @@ const CACHE_TTL_MS = 60_000; // 1 minute
 // Fetch USD prices for up to 30 token addresses in one API call.
 // Returns Map<address_lower, price_usd_float | null>
 async function gtFetchBatch(addresses) {
-  if(NO_CORS_API) return new Map(); // GeckoTerminal blocked by CORS on localhost/file://
+  if(IS_FILE) return new Map(); // GeckoTerminal blocked on file:// protocol (localhost uses proxy)
   const unique = [...new Set(addresses.map(a => a.toLowerCase()))].filter(Boolean);
   if (!unique.length) return new Map();
 
@@ -2082,12 +2082,12 @@ if(IS_FILE){
 
 // ─── HOME PAGE ────────────────────────────────────────────────────
 async function homeRefresh(){
-  if(NO_CORS_API){
-    // Show N/A on localhost since CORS blocks API calls
+  // Note: localhost will try via proxiedFetch, file:// shows N/A
+  if(IS_FILE){
     const el=document.getElementById('home-price');
     if(el) el.textContent='N/A';
     const chgEl=document.getElementById('home-chg');
-    if(chgEl) chgEl.textContent='Localhost mode';
+    if(chgEl) chgEl.textContent='File mode';
     ['hm-mcap','hm-mcap2','hm-vol','hm-vol2'].forEach(id=>{
       const e=document.getElementById(id); if(e) e.textContent='—';
     });
@@ -2139,9 +2139,9 @@ let chartLastLoad=0;
 const CHART_TTL=60_000; // re-fetch at most once per minute
 
 async function chartLoad(){
-  if(NO_CORS_API){
+  if(IS_FILE){
     chartLoaded=true;
-    // Show N/A on localhost since CORS blocks API calls
+    // Show N/A on file:// protocol since it blocks all API calls
     const setEl=(id,txt)=>{const e=document.getElementById(id);if(e)e.textContent=txt;};
     setEl('chart-price', 'N/A');
     setEl('chart-price2','N/A');
@@ -2152,7 +2152,7 @@ async function chartLoad(){
     setEl('chart-high',  '—');
     setEl('chart-low',   '—');
     const chgEl=document.getElementById('chart-chg-badge');
-    if(chgEl){chgEl.textContent='Localhost'; chgEl.className='chart-chg neu';}
+    if(chgEl){chgEl.textContent='File mode'; chgEl.className='chart-chg neu';}
     return;
   }
   // Allow reload if stale
@@ -2448,7 +2448,7 @@ const BS2 = 'https://api.scan.pulsechain.com/api/v2';
 
 // Fetch all pages from BlockScout v2 tokens endpoint
 async function fetchBS2Tokens(addr){
-  if(NO_CORS_API) return []; // BlockScout blocked by CORS on localhost/file://
+  if(IS_FILE) return []; // BlockScout blocked on file:// protocol (localhost uses proxy)
   const results=[];
   let nextPage=null;
   const base=`${BS2}/addresses/${addr}/tokens?type=ERC-20%2CERC-721%2CERC-1155`;
@@ -3283,7 +3283,7 @@ async function ptsFetchWallet(addr){
   const cached=ptsCache.get(k);
   if(cached&&Date.now()-cached.ts<PTS_TTL) return cached;
 
-  if(NO_CORS_API){
+  if(IS_FILE){
     const result={total:0,breakdown:{purge:0,stake:0,buy:0,treasury:0,claim:0,unstake:0},
                   counts:{purge:0,stake:0,buy:0,treasury:0,claim:0,unstake:0},ts:Date.now(),offline:true};
     ptsCache.set(k,result);
@@ -3445,8 +3445,9 @@ async function ptsLoadLeaderboard(force=false){
   const listEl=document.getElementById('pts-lb-list');
   if(!listEl)return;
 
-  if(NO_CORS_API){
-    listEl.innerHTML='<div class="lb-empty">Leaderboard requires a deployed URL.<br>BlockScout API is CORS-blocked on localhost.</div>';
+  // Note: localhost will try to load via proxiedFetch, file:// will fail gracefully
+  if(IS_FILE){
+    listEl.innerHTML='<div class="lb-empty">Leaderboard requires http://localhost or deployed URL.<br>File:// protocol blocks API calls.</div>';
     return;
   }
 
